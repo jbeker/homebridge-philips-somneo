@@ -1,16 +1,16 @@
 {
   "private": true,
-  "displayName": "Plugin Name",
-  "name": "homebridge-plugin-name",
+  "displayName": "Philips SmartSleep Connected Sleep and Wake-Up Light",
+  "name": "homebridge-philips-somneo",
   "version": "1.0.0",
-  "description": "A short description about what your plugin does.",
+  "description": "Homebridge plugin for the Philips SmartSleep Connected Sleep and Wake-Up Light.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git://github.com/USERNAME/GITHUB_PROJECT_NAME.git"
+    "url": "git://github.com/jbeker/homebridge-philips-somneo.git"
   },
   "bugs": {
-    "url": "https://github.com/USERNAME/GITHUB_PROJECT_NAME/issues"
+    "url": "https://github.com/jbeker/homebridge-philips-somneo/issues"
   },
   "engines": {
     "node": ">=10.17.0",
