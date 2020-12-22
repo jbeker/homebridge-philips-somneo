@@ -1,95 +1,144 @@
 import { Service, PlatformAccessory, CharacteristicValue, CharacteristicSetCallback, CharacteristicGetCallback } from 'homebridge';
 
-import { ExampleHomebridgePlatform } from './platform';
+import { SomneoPlatform } from './platform';
+
+import axios from 'axios';
+import https from 'https';
 
 /**
  * Platform Accessory
  * An instance of this class is created for each accessory your platform registers
  * Each accessory may expose multiple services of different service types.
  */
-export class ExamplePlatformAccessory {
-  private service: Service;
+export class SomneoAccessory {
+  private lightService: Service;
+  private tempService: Service;
+  private humidityService: Service;
+  private lightLevelService: Service;
 
   /**
    * These are just used to create a working example
    * You should implement your own code to track the state of your accessory
    */
-  private exampleStates = {
+  private somneoState = {
     On: false,
     Brightness: 100,
+    Temperature: 0,
+    Humidity: 0,
+    LightLevel: 0,
+    Sound: 0,
   }
 
   constructor(
-    private readonly platform: ExampleHomebridgePlatform,
+    private readonly platform: SomneoPlatform,
     private readonly accessory: PlatformAccessory,
   ) {
-
+    
+    // Get basic data from Somneo
+    this.platform.log.info('Somneo IP ->', accessory.context.device.address);
+    
     // set accessory information
     this.accessory.getService(this.platform.Service.AccessoryInformation)!
-      .setCharacteristic(this.platform.Characteristic.Manufacturer, 'Default-Manufacturer')
-      .setCharacteristic(this.platform.Characteristic.Model, 'Default-Model')
-      .setCharacteristic(this.platform.Characteristic.SerialNumber, 'Default-Serial');
+      .setCharacteristic(this.platform.Characteristic.Manufacturer, accessory.context.upnpData.manufacturer)
+      .setCharacteristic(this.platform.Characteristic.Model, accessory.context.upnpData.modelName)
+      .setCharacteristic(this.platform.Characteristic.SerialNumber, accessory.context.upnpData.UDN);
 
     // get the LightBulb service if it exists, otherwise create a new LightBulb service
     // you can create multiple services for each accessory
-    this.service = this.accessory.getService(this.platform.Service.Lightbulb) || this.accessory.addService(this.platform.Service.Lightbulb);
+    this.lightService = this.accessory.getService(this.platform.Service.Lightbulb) || this.accessory.addService(this.platform.Service.Lightbulb);
 
     // set the service name, this is what is displayed as the default name on the Home app
     // in this example we are using the name we stored in the `accessory.context` in the `discoverDevices` method.
-    this.service.setCharacteristic(this.platform.Characteristic.Name, accessory.context.device.exampleDisplayName);
+    this.lightService.setCharacteristic(this.platform.Characteristic.Name, accessory.context.upnpData.friendlyName);
 
     // each service must implement at-minimum the "required characteristics" for the given service type
     // see https://developers.homebridge.io/#/service/Lightbulb
 
     // register handlers for the On/Off Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.On)
+    this.lightService.getCharacteristic(this.platform.Characteristic.On)
       .on('set', this.setOn.bind(this))                // SET - bind to the `setOn` method below
       .on('get', this.getOn.bind(this));               // GET - bind to the `getOn` method below
 
     // register handlers for the Brightness Characteristic
-    this.service.getCharacteristic(this.platform.Characteristic.Brightness)
+    this.lightService.getCharacteristic(this.platform.Characteristic.Brightness)
       .on('set', this.setBrightness.bind(this));       // SET - bind to the 'setBrightness` method below
+      
+      
+    //=====================================================================================================
+    this.tempService = this.accessory.getService(this.platform.Service.TemperatureSensor) || this.accessory.addService(this.platform.Service.TemperatureSensor);
+      
+    // register handlers Temperature Characteristic
+    this.tempService.getCharacteristic(this.platform.Characteristic.CurrentTemperature)
+      .on('get', this.getTemperature.bind(this));
+      
+    //=====================================================================================================
+    this.humidityService = this.accessory.getService(this.platform.Service.HumiditySensor) || this.accessory.addService(this.platform.Service.HumiditySensor);
+      
+    // register handlers Humidity Characteristic
+    this.humidityService.getCharacteristic(this.platform.Characteristic.CurrentRelativeHumidity)
+      .on('get', this.getHumidity.bind(this));
+      
+    //=====================================================================================================
+    this.lightLevelService = this.accessory.getService(this.platform.Service.LightSensor) || this.accessory.addService(this.platform.Service.LightSensor);
+      
+    // register handlers Humidity Characteristic
+    this.lightLevelService.getCharacteristic(this.platform.Characteristic.CurrentAmbientLightLevel)
+      .on('get', this.getLightLevel.bind(this));
 
-
-    /**
-     * Creating multiple services of the same type.
-     * 
-     * To avoid "Cannot add a Service with the same UUID another Service without also defining a unique 'subtype' property." error,
-     * when creating multiple services of the same type, you need to use the following syntax to specify a name and subtype id:
-     * this.accessory.getService('NAME') || this.accessory.addService(this.platform.Service.Lightbulb, 'NAME', 'USER_DEFINED_SUBTYPE_ID');
-     * 
-     * The USER_DEFINED_SUBTYPE must be unique to the platform accessory (if you platform exposes multiple accessories, each accessory
-     * can use the same sub type id.)
-     */
-
-    // Example: add two "motion sensor" services to the accessory
-    const motionSensorOneService = this.accessory.getService('Motion Sensor One Name') ||
-      this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor One Name', 'YourUniqueIdentifier-1');
-
-    const motionSensorTwoService = this.accessory.getService('Motion Sensor Two Name') ||
-      this.accessory.addService(this.platform.Service.MotionSensor, 'Motion Sensor Two Name', 'YourUniqueIdentifier-2');
-
-    /**
-     * Updating characteristics values asynchronously.
-     * 
-     * Example showing how to update the state of a Characteristic asynchronously instead
-     * of using the `on('get')` handlers.
-     * Here we change update the motion sensor trigger states on and off every 10 seconds
-     * the `updateCharacteristic` method.
-     * 
-     */
-    let motionDetected = false;
+    this.updateSensorData();
+    
+    // Update periodically
     setInterval(() => {
-      // EXAMPLE - inverse the trigger
-      motionDetected = !motionDetected;
+      this.updateSensorData();
+    }, 60 * 1000); // 5 minutes
+  }
+  
+  updateSensorData() {
+    const instance = axios.create({
+      httpsAgent: new https.Agent({  
+        rejectUnauthorized: false,
+      }),
+    });
+    
+    const endpoint = 'https://' + this.accessory.context.device.address + '/di/v1/products/1/wusrd';
+    
+    instance.get(endpoint)
+      .then((response) => {
+        this.platform.log.info('Updating Sensors');
+        // handle success
+        this.somneoState.Temperature = response.data.mstmp;
+        this.somneoState.Humidity = response.data.msrhu;
+        this.somneoState.LightLevel = response.data.mslux;
+        this.somneoState.Sound = response.data.mssnd;
+        
+        this.tempService.getCharacteristic(this.platform.Characteristic.CurrentTemperature).updateValue(this.somneoState.Temperature);
+        this.humidityService.getCharacteristic(this.platform.Characteristic.CurrentRelativeHumidity).updateValue(this.somneoState.Humidity);
+        this.lightLevelService.getCharacteristic(this.platform.Characteristic.CurrentAmbientLightLevel).updateValue(this.somneoState.LightLevel);
+      })
+      .catch((error) => {
+        // handle error
+        this.platform.log.info(error);
+      });
+      
+  }
 
-      // push the new value to HomeKit
-      motionSensorOneService.updateCharacteristic(this.platform.Characteristic.MotionDetected, motionDetected);
-      motionSensorTwoService.updateCharacteristic(this.platform.Characteristic.MotionDetected, !motionDetected);
-
-      this.platform.log.debug('Triggering motionSensorOneService:', motionDetected);
-      this.platform.log.debug('Triggering motionSensorTwoService:', !motionDetected);
-    }, 10000);
+  
+  getTemperature(callback: CharacteristicGetCallback) {
+    const currentTemperature = this.somneoState.Temperature;
+    this.platform.log.info('Get Temperature ->', currentTemperature);
+    callback(null, currentTemperature);
+  }
+  
+  getHumidity(callback: CharacteristicGetCallback) {
+    const currentHumidity = this.somneoState.Humidity;
+    this.platform.log.info('Get Humidity ->', currentHumidity);
+    callback(null, currentHumidity);
+  }
+  
+  getLightLevel(callback: CharacteristicGetCallback) {
+    const currentLightLevel = this.somneoState.LightLevel;
+    this.platform.log.info('Get Light Level ->', currentLightLevel);
+    callback(null, currentLightLevel);
   }
 
   /**
@@ -99,9 +148,9 @@ export class ExamplePlatformAccessory {
   setOn(value: CharacteristicValue, callback: CharacteristicSetCallback) {
 
     // implement your own code to turn your device on/off
-    this.exampleStates.On = value as boolean;
+    this.somneoState.On = value as boolean;
 
-    this.platform.log.debug('Set Characteristic On ->', value);
+    this.platform.log.info('Set Characteristic On ->', value);
 
     // you must call the callback function
     callback(null);
@@ -118,14 +167,14 @@ export class ExamplePlatformAccessory {
    * asynchronously instead using the `updateCharacteristic` method instead.
 
    * @example
-   * this.service.updateCharacteristic(this.platform.Characteristic.On, true)
+   * this.lightService.updateCharacteristic(this.platform.Characteristic.On, true)
    */
   getOn(callback: CharacteristicGetCallback) {
 
     // implement your own code to check if the device is on
-    const isOn = this.exampleStates.On;
+    const isOn = this.somneoState.On;
 
-    this.platform.log.debug('Get Characteristic On ->', isOn);
+    this.platform.log.info('Get Characteristic On ->', isOn);
 
     // you must call the callback function
     // the first argument should be null if there were no errors
@@ -140,9 +189,9 @@ export class ExamplePlatformAccessory {
   setBrightness(value: CharacteristicValue, callback: CharacteristicSetCallback) {
 
     // implement your own code to set the brightness
-    this.exampleStates.Brightness = value as number;
+    this.somneoState.Brightness = value as number;
 
-    this.platform.log.debug('Set Characteristic Brightness -> ', value);
+    this.platform.log.info('Set Characteristic Brightness -> ', value);
 
     // you must call the callback function
     callback(null);
